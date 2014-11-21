@@ -1,0 +1,205 @@
+---
+title: "Qualitative Activity Prediction of Weight Lifting Exercises"
+---
+
+
+##Background
+
+Information for this project is sourced from the Weight Lifting Exercise Dataset section of  <http://groupware.les.inf.puc-rio.br/har>.
+
+We are provided with training and testing datasets. These contain data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different classes namely:
+
+A. Exactly according to specification 
+B. Throwing the elbows to the front
+C. Lifting the dumbbell only halfway
+D. Lowering the dumbbell only halfway
+E. Throwing the hips to the front
+
+
+
+###Question
+The goal is to predict the manner (classe variable in dataset) in which the participants did the exercise for the testing dataset. In the process, we will have to explain the choice of our model and its features.
+
+
+##Loading the libraries required.
+
+```{r,message=FALSE}
+library(caret)
+library(dplyr)
+library(randomForest)
+library(e1071)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+```
+
+
+
+##Input
+
+Loading the training and testing datasets
+```{r,echo=T, cache=T}
+setwd("C:/Users/rohit/Desktop/Coursera Data Science Specialization/Practical machine learning")
+if (!file.exists("training.csv")){
+  url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(url, "training.csv")
+}
+
+if (!file.exists("testing.csv")){
+  url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(url, "testing.csv")
+}
+
+training=read.csv("training.csv",  na.strings=c("", "NA", "#DIV/0!"))
+testing=read.csv("testing.csv",  na.strings=c("", "NA", "#DIV/0!"))
+```
+
+
+
+##Features
+
+Removing variables with more than 50% missing values
+```{r,echo=TRUE}
+rmv_cols_NA=training[colMeans(is.na(training))>0.50]
+clean_data=training[,-which( names(training) %in% names(rmv_cols_NA ))]
+```
+
+
+Removing variables related to timestamp, window, and user name that are not required for the question namely:
+```{r, echo=TRUE}
+names(clean_data[1,1:7])
+clean_data=clean_data[,8:ncol(clean_data)]
+clean_data_numeric=data.frame(apply(clean_data[,-53],2, as.numeric))
+clean_data=cbind(clean_data_numeric,select(clean_data,classe ))
+```
+
+There are no variables with near zero variance.
+```{r}
+nzv=nearZeroVar(clean_data)
+length(nzv)
+```
+
+
+
+Splitting the training dataset into training and validation
+```{r, echo=T, cache=T}
+set.seed(12123)
+inTrain=createDataPartition(y=clean_data$classe, p=0.6, list=F)
+training=clean_data[inTrain,]
+validation=clean_data[-inTrain,]
+```
+
+With the cleaning up, the number of predictors have reduced to
+```{r,echo=F}
+ncol(training)
+```
+
+
+
+##Algorithm and Evaluation
+
+###Recursive Partitioning and Regression trees algorithm
+I expect the out of sample error rate to be 0.02 or less, i.e. the Accuracy ~98%. The accuracy for this model is ~75% which is not impressive.
+```{r, echo=TRUE, cache=T}
+modFit1=rpart(classe~.,data=training, method="class")
+pred1=predict(modFit1, validation, type="class")
+print(confusionMatrix(pred1, validation$classe))
+```
+
+Using varImp, we can rate the predictors by their importance and keep only the ones necessary.
+```{r, cache=T, echo=TRUE}
+vars=varImp(modFit1)
+keep=rownames(vars)[vars$Overall>0]
+```
+
+With this, the number of predictors have reduced to
+```{r,echo=F}
+length(keep)
+```
+
+
+###Random forest algorithm
+The accuracy for this model is 99% however there are 34 predictors and we would like to reduce this number.
+```{r, echo=T, cache=T}
+training=training[,c(keep, "classe")]
+modFit2=randomForest(classe~., data=training, type="class")
+modFit2
+pred2=predict(modFit2, validation, type="class")
+print(confusionMatrix(pred2, validation$classe))
+```
+
+Using varImp to rate the predictors of modFit2 based on importance.
+```{r,  echo=TRUE}
+vars=varImp(modFit2)
+vars$varname=rownames(vars)
+vars=vars[order(vars[,"Overall"], decreasing=T),]
+
+```
+
+```{r, echo=T, cache=T}
+accuracy=c()
+for (i in 1:15){
+  cols=c(vars[1:i, 2], "classe")
+  training_data=training[,cols] 
+  modFit3=randomForest(classe~., data=training_data, type="class")
+  validation_data=validation[ ,which( names(validation) %in% names(training_data))]
+  pred3 <- predict(modFit3, validation_data, type ="class")
+  cm=confusionMatrix(pred3, validation_data$classe)
+  accuracy=append(accuracy, cm$overall["Accuracy"])   
+  i=i+1
+}
+
+```
+
+
+As we can see from the graph, top 6 most important predictors are sufficient to increase the accuracy of prediction to ~100.  
+```{r,echo=F}
+plot(1:length(accuracy), accuracy, type="b", col="red", "xlab"="Number of predictors",
+     ylab="Accuracy %", main="Model 3", ylim=c(0,1), xlim=c(1,15))
+```
+
+These 6 predictors are:
+```{r,echo=F}
+cols=vars[1:6, 2]
+print(cols)
+```
+
+
+
+##Predicting with testing dataset 
+Now we will predict for testing data with 6 predictors discussed above.
+```{r, echo=TRUE, cache=T}
+
+training_data=training[ ,which( names(training) %in% c(cols,"classe"))]
+testing_data=testing[ ,which( names(testing) %in% cols)]
+
+modFinal=randomForest(classe~., data=training_data, type="class")
+
+#These are 100% accurate per submission.
+p=predict(modFinal, testing_data)
+print(p)
+```
+
+
+
+##Conclusion
+We use Random Forest Algorithm with 6 predictors named below to predict the classe of exercise with ~100% accuracy. 
+```{r,echo=F}
+cols=vars[1:6, 2]
+print(cols)
+```
+
+
+
+##Results
+```{r, echo=TRUE, cache=T}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(p)
+```
